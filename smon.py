@@ -6,6 +6,8 @@ import argparse
 import shlex
 
 CHECK_MDRAID = "sudo mdadm --detail --test --scan"
+HOST = ''
+PORT = 8181
 OK = True
 ER = False
 
@@ -31,7 +33,6 @@ def all():
   output = []
   status = OK
   for attr in dir(monitor):
-    print(attr, attr.startswith("check_"))
     if attr.startswith("check_"):
       st, out = getattr(monitor, attr)()
       if st != OK: status = ER
@@ -42,5 +43,8 @@ def all():
 if __name__ == '__main__':
   parser = argparse.ArgumentParser(description='Monitor the machine.')
   parser.add_argument('--debug', default=False, type=bool, const=True, nargs='?', help='enable debug mode')
+  parser.add_argument('--listen', default="%s:%s"%(HOST,PORT), type=str,
+      help='Override listen address. :8080 means to bind on 0.0.0.0:8080')
   args = parser.parse_args()
-  run(host='', port=8181, debug=args.debug, reloader=args.debug, interval=0.2)
+  HOST, PORT = args.listen.split(':')
+  run(host=HOST, port=PORT, debug=args.debug, reloader=args.debug, interval=0.2)
