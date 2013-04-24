@@ -10,5 +10,5 @@ setup(name='smon',
       description="reliable server monitoring daemon",
       scripts=['smon.py'],
       py_modules=["bottle"],
-      data_files=[('/etc/systemd/system/', ['smon.service'])]
+      data_files=[('/usr/lib/systemd/system', ['smon.service'])]
 )

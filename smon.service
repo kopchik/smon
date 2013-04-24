@@ -4,6 +4,7 @@ Description=server monitoring daemon
 [Service]
 Type=simple
 ExecStart=/usr/bin/smon.py
+Restart=always
 
 [Install]
 WantedBy=network.target
