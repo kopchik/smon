@@ -2,6 +2,9 @@
 
 from bottle import SimpleTemplate, TEMPLATE_PATH, static_file, route, request, response, view, run
 from subprocess import check_output, CalledProcessError
+from threading import Thread, Lock, Timer
+from queue import Queue, PriorityQueue
+from useful.log import Log
 import argparse
 import shlex
 import time
@@ -27,6 +30,35 @@ SimpleTemplate.defaults['ER'] = ER
 SimpleTemplate.defaults['DEBUG'] = False
 
 
+class TimerCanceled(Exception):
+  """Fired in .join() when MyTimer is aborted by .cancel"""
+
+
+assert not hasattr(Timer, "canceled"),  \
+    "Do not want to override attribute, pick another name"
+assert not hasattr(Timer, "interval"),  \
+    "Do not want to override attribute, pick another name"
+
+class MyTimer(Timer):
+  """ Advanced timer. It support the following enhancements:
+      1. It keeps interval in .interval
+      2. .join() raises TimerCanceled if timer was canceled
+  """
+  def __init__(self, t, f=lambda: True, **kwargs):
+    super().__init__(t, f, **kwargs)
+    self.canceled = False
+    self.interval = t
+
+  def cancel(self):
+    super().cancel()
+    self.canceled = True
+
+  def join(self):
+    super().join()
+    if self.canceled:
+      raise TimerCanceled
+
+
 def check(cmd):
   if isinstance(cmd, str):
     cmd = shlex.split(cmd)
@@ -45,77 +77,87 @@ monitor = Monitor()
 
 
 checks = []
-class Check:
-  last_cheched = None
+class Checker:
+  interval = 60
+  last_checked = None
   last_status = None, "<no check were performed yet>"
 
   def __init__(self, interval=60):
     global checks
     self.interval = interval
     checks += [self]
+    self.statuses = []
+    self.log = Log("checker %s" % self.__class__.__name__)
 
   def check(self):
-    self.last_cheched = time.time()
+    self.last_checked = time.time()
     self.last_status = ER, "<this is a generic check>"
     return self.last_status
 
-  def schedule(self):
+  def get_next_check(self):
+    if not self.last_checked:
+      self.log.debug("was never checked, requesting immediate check")
+      return -1
     now = time.time()
-    next_check = self.last_cheched + self.interval
+    next_check = self.last_checked + self.interval
     if next_check < now:
       #TODO: emit warning message
       return now
 
 
-class Timeline:
-  def __init__(self):
-    self.timeline = []
-    self.queue = Queue()
+class Scheduler(Thread):
+  """ Schedules and executes tasks using threaded workers
+  """
+  def __init__(self, workers=5):
+    super().__init__(daemon=True)
+    self.lock = Lock()       # lock queue manipulations
+    self.inq  = PriorityQueue()
+    self.outq = Queue()      # fired checks to be executed
+    self.timer = MyTimer(0)  # empty timer
+    self.log = Log("scheduler")
+    for i in range(workers):
+      worker = Worker(self)
+      worker.start()
 
-  def add(self, time, check):
-    with LOCK:
-      entry = (time, check)
-      #TODO: stop loop and then start it again
-      for i, (t, c) in self.timeline:
-        if t>time:
-          if i == 0:
-            # if we are in the head put it on top
-            # TODO: here we need to reschedule
-            self.timeline.insert(0, entry)
-          else:
-            self.timeline.insert(i-1, entry)
-          break
-      else:
-        self.timeline += [entry]
-
-  def loop(self):
-    while True:
-      now = time.time()
-      t, c = self.timeline[0]
-      delta = t - now
-      if delta <= 0:
-        self.log.error("we are behind schedule")
-      else:
-        try:
-          self.timer = Timer()
-          self.timer.start()
-          self.timer.join()
-        except ABORTED: continue
-      with LOCK:
-        self.timeline.pop(0)
-        self.queue.put(c)
-
-
-class Worker(Thread):
-  def __init__(self, queue):
-    self.queue = queue
-    super().__init__()
-    self.daemon = False
+  def schedule(self, checker):
+    time = checker.get_next_check()
+    with self.lock:
+      self.inq.put((time, checker))
+      self.timer.cancel()  # trigger recalculate because this task may go before pending
 
   def run(self):
     while True:
-      c = self.queue.get()
+      t, c = self.inq.get()
+      with self.lock:
+        now = time.time()
+        self.timer = MyTimer(t-now, lambda: 1)
+      try:
+        self.timer.start()
+        self.log.debug("sleeping for %s" % self.timer.interval)
+        self.timer.join()
+      except TimerCanceled:
+        self.log.notice("timer aborted, recalculating timeouts")
+        with self.lock:
+          self.inq.put((t,c))
+        continue
+      self.outq.put(c)
+
+
+class Worker(Thread):
+  def __init__(self, timeline):
+    super().__init__(daemon=False)
+    self.timeline = timeline
+    self.log = Log("worker %s" % self.name)
+
+  def run(self):
+    queue = self.timeline.outq
+    schedule = self.timeline.schedule
+    while True:
+      c = queue.get()
+      self.log.debug("running %s" % c)
       r, out = c.check()
+      schedule(c)
+
 
 
 @route('/')
