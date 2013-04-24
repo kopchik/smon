@@ -1,8 +1,10 @@
 #!/usr/bin/env python
 
-from bottle import HTTPResponse, route, run
 from subprocess import check_output, CalledProcessError
+from bottle import HTTPResponse, route, run
+import argparse
 import shlex
+
 CHECK_MDRAID = "sudo mdadm --detail --test --scan"
 OK = True
 ER = False
@@ -38,4 +40,7 @@ def all():
 
 
 if __name__ == '__main__':
-  run(host='', port=8080, debug=True, reloader=True, interval=0.2)
+  parser = argparse.ArgumentParser(description='Monitor the machine.')
+  parser.add_argument('--debug', default=False, type=bool, const=True, nargs='?', help='enable debug mode')
+  args = parser.parse_args()
+  run(host='', port=8080, debug=args.debug, reloader=args.debug, interval=0.2)
