@@ -2,12 +2,12 @@
 %for status, output in checks:
 %if not status:
   <div class="ok">
-  {{output}}
-  </div>
 %else:
   <div class="er">
-  {{output}}
-  </div>
 %end
+  <pre>
+  {{output}}
+  </pre>
+  </div>
   <br>
 %end
