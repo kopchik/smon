@@ -7,6 +7,9 @@
   <title>{{title or 'server monitoring'}}</title>
 </head>
 <body>
+  %if DEBUG:
+  <p>Running in debug mode</p>
+  %end
   <div id="header">
     Last updated: {{tstamp}}<br>
   </div>

@@ -5,6 +5,7 @@ from subprocess import check_output, CalledProcessError
 import argparse
 import shlex
 import time
+import sys
 
 __version__ = 1.2
 CHECK_MDRAID = "sudo mdadm --detail --test --scan"
@@ -23,6 +24,7 @@ class Time:
 SimpleTemplate.defaults['tstamp'] = Time()
 SimpleTemplate.defaults['OK'] = OK
 SimpleTemplate.defaults['ER'] = ER
+SimpleTemplate.defaults['DEBUG'] = False
 
 
 def check(cmd):
@@ -55,9 +57,11 @@ def all():
   response.status = 200 if status == OK else 504
   return dict(checks=checks, status=status)
 
+
 @route('/static/<path:path>')
 def callback(path):
     return static_file(path, root=STATIC_ROOT)
+
 
 if __name__ == '__main__':
   parser = argparse.ArgumentParser(description='Monitor the machine.')
@@ -69,6 +73,8 @@ if __name__ == '__main__':
   if args.debug:
     TEMPLATE_PATH.insert(0, 'views/')
     STATIC_ROOT = 'static/'
+    SimpleTemplate.defaults['DEBUG'] = True
+    print("running in debug mode", file=sys.stderr)
 
   HOST, PORT = args.listen.split(':')
   run(host=HOST, port=PORT, debug=args.debug, reloader=args.debug, interval=0.2)
