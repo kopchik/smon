@@ -1,0 +1,14 @@
+#header {
+  background-color:#00FF99;
+  font-weight:bold;
+  /*color:green;  */
+}
+
+div.ok {
+  color:black;
+}
+
+div.er {
+  font-weight:bold;
+  color:red;
+}

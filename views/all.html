@@ -1,0 +1,13 @@
+%rebase base title='monitoring overview'
+%for status, output in checks:
+%if not status:
+  <div class="ok">
+  {{output}}
+  </div>
+%else:
+  <div class="er">
+  {{output}}
+  </div>
+%end
+  <br>
+%end

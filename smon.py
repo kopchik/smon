@@ -1,15 +1,26 @@
 #!/usr/bin/env python
 
+from bottle import SimpleTemplate, TEMPLATE_PATH, static_file, route, request, response, view, run
 from subprocess import check_output, CalledProcessError
-from bottle import HTTPResponse, route, run
 import argparse
 import shlex
+import time
 
+__version__ = 1.2
 CHECK_MDRAID = "sudo mdadm --detail --test --scan"
 HOST = ''
 PORT = 8181
 OK = True
 ER = False
+
+PREFIX = '/usr/share/smon-%s/' % __version__
+TEMPLATE_PATH.insert(0, PREFIX + 'views')
+STATIC_ROOT = PREFIX + 'static'
+
+class Time:
+    def __str__(self):
+        return time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime())
+SimpleTemplate.defaults['tstamp'] = Time()
 
 def check(cmd):
   if isinstance(cmd, str):
@@ -29,16 +40,21 @@ monitor = Monitor()
 
 
 @route('/')
+@view('all')
 def all():
-  output = []
+  checks = []
   status = OK
   for attr in dir(monitor):
     if attr.startswith("check_"):
       st, out = getattr(monitor, attr)()
       if st != OK: status = ER
-      output += [out]
-  return HTTPResponse("\n".join(output), 200 if status == OK else 504)
+      checks += [(st, out)]
+  response.status = 200 if status == OK else 504
+  return dict(checks=checks, status=status)
 
+@route('/static/<path:path>')
+def callback(path):
+    return static_file(path, root='static/')
 
 if __name__ == '__main__':
   parser = argparse.ArgumentParser(description='Monitor the machine.')
