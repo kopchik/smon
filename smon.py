@@ -7,7 +7,7 @@ import shlex
 import time
 import sys
 
-__version__ = 1.2
+__version__ = 1.3
 CHECK_MDRAID = "sudo mdadm --detail --test --scan"
 HOST = ''
 PORT = 8181
@@ -42,6 +42,80 @@ class Monitor:
     st, out = check(CHECK_MDRAID)
     return st, out if out else "no raid configured?"
 monitor = Monitor()
+
+
+checks = []
+class Check:
+  last_cheched = None
+  last_status = None, "<no check were performed yet>"
+
+  def __init__(self, interval=60):
+    global checks
+    self.interval = interval
+    checks += [self]
+
+  def check(self):
+    self.last_cheched = time.time()
+    self.last_status = ER, "<this is a generic check>"
+    return self.last_status
+
+  def schedule(self):
+    now = time.time()
+    next_check = self.last_cheched + self.interval
+    if next_check < now:
+      #TODO: emit warning message
+      return now
+
+
+class Timeline:
+  def __init__(self):
+    self.timeline = []
+    self.queue = Queue()
+
+  def add(self, time, check):
+    with LOCK:
+      entry = (time, check)
+      #TODO: stop loop and then start it again
+      for i, (t, c) in self.timeline:
+        if t>time:
+          if i == 0:
+            # if we are in the head put it on top
+            # TODO: here we need to reschedule
+            self.timeline.insert(0, entry)
+          else:
+            self.timeline.insert(i-1, entry)
+          break
+      else:
+        self.timeline += [entry]
+
+  def loop(self):
+    while True:
+      now = time.time()
+      t, c = self.timeline[0]
+      delta = t - now
+      if delta <= 0:
+        self.log.error("we are behind schedule")
+      else:
+        try:
+          self.timer = Timer()
+          self.timer.start()
+          self.timer.join()
+        except ABORTED: continue
+      with LOCK:
+        self.timeline.pop(0)
+        self.queue.put(c)
+
+
+class Worker(Thread):
+  def __init__(self, queue):
+    self.queue = queue
+    super().__init__()
+    self.daemon = False
+
+  def run(self):
+    while True:
+      c = self.queue.get()
+      r, out = c.check()
 
 
 @route('/')
