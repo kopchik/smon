@@ -1,0 +1,9 @@
+[Unit]
+Description=server monitoring daemon
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/smon.py
+
+[Install]
+WantedBy=network.target
