@@ -21,6 +21,9 @@ class Time:
     def __str__(self):
         return time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime())
 SimpleTemplate.defaults['tstamp'] = Time()
+SimpleTemplate.defaults['OK'] = OK
+SimpleTemplate.defaults['ER'] = ER
+
 
 def check(cmd):
   if isinstance(cmd, str):
@@ -54,7 +57,7 @@ def all():
 
 @route('/static/<path:path>')
 def callback(path):
-    return static_file(path, root='static/')
+    return static_file(path, root=STATIC_ROOT)
 
 if __name__ == '__main__':
   parser = argparse.ArgumentParser(description='Monitor the machine.')
@@ -62,5 +65,10 @@ if __name__ == '__main__':
   parser.add_argument('--listen', default="%s:%s"%(HOST,PORT), type=str,
       help='Override listen address. :8080 means to bind on 0.0.0.0:8080')
   args = parser.parse_args()
+
+  if args.debug:
+    TEMPLATE_PATH.insert(0, 'views/')
+    STATIC_ROOT = 'static/'
+
   HOST, PORT = args.listen.split(':')
   run(host=HOST, port=PORT, debug=args.debug, reloader=args.debug, interval=0.2)

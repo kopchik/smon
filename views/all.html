@@ -1,6 +1,6 @@
 %rebase base title='monitoring overview'
 %for status, output in checks:
-%if not status:
+%if status == OK:
   <div class="ok">
 %else:
   <div class="er">
