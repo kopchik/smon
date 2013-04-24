@@ -43,4 +43,4 @@ if __name__ == '__main__':
   parser = argparse.ArgumentParser(description='Monitor the machine.')
   parser.add_argument('--debug', default=False, type=bool, const=True, nargs='?', help='enable debug mode')
   args = parser.parse_args()
-  run(host='', port=8080, debug=args.debug, reloader=args.debug, interval=0.2)
+  run(host='', port=8181, debug=args.debug, reloader=args.debug, interval=0.2)
