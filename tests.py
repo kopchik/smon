@@ -23,10 +23,14 @@ class TestChecker(Checker):
     return OK, "<check done>"
 
 
-def test_timeline():
+def test_scheduler():
   scheduler = Scheduler()
   scheduler.start()
   scheduler.schedule(TestChecker())
   t = MyTimer(2)
   t.start()
   t.join()
+
+
+if __name__ == '__main__':
+  test_scheduler()

@@ -8,7 +8,39 @@ div.ok {
   color:black;
 }
 
-div.er {
+div.err {
   font-weight:bold;
   color:red;
+}
+
+div.unknown {
+  background-color: gray;
+}
+
+div.check {
+  border:1px solid;
+}
+
+div.c_name {
+  text-align: center;
+  min-width: 5em;
+  float:left;
+}
+
+div.c_last {
+  text-align: center;
+  min-width: 5em;
+  float: left;
+}
+
+.out {
+  /*display: inline-block;*/
+  margin: 2px;
+  padding: 0;
+  min-width: 10em;
+  float: left;
+}
+
+.red {
+  background-color: red;  
 }

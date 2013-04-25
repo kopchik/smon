@@ -1,0 +1,21 @@
+%def delta(last_time):
+%  d = time.epoch() - last_time
+%  return "%sm %ss" % (int(d//60), int(d%60))
+%end
+
+%r, out = check.last_status
+%if r == OK:
+  <div class="check ok">
+%elif r == ERR:
+  <div class="check err">
+%elif r is None:
+  <div class="check unknown">
+%else:
+  WARNING: Unknown status
+  <div class="check">
+%end
+<div class="c_name">{{check.name}}</div>
+<div class="c_name">{{delta(check.last_checked)}}</div>
+
+<pre class="out">{{out}}</pre>
+</div>

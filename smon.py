@@ -4,29 +4,33 @@ from bottle import SimpleTemplate, TEMPLATE_PATH, static_file, route, request, r
 from subprocess import check_output, CalledProcessError
 from threading import Thread, Lock, Timer
 from queue import Queue, PriorityQueue
-from useful.log import Log
+from useful.log import Log, set_global_level
+from collections import deque
 import argparse
 import shlex
 import time
 import sys
 
 __version__ = 1.3
+set_global_level("debug")
 CHECK_MDRAID = "sudo mdadm --detail --test --scan"
 HOST = ''
 PORT = 8181
 OK = True
-ER = False
+ERR = False
 
 PREFIX = '/usr/share/smon-%s/' % __version__
 TEMPLATE_PATH.insert(0, PREFIX + 'views')
 STATIC_ROOT = PREFIX + 'static'
 
 class Time:
+    def epoch(self):
+      return time.time()
     def __str__(self):
         return time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime())
-SimpleTemplate.defaults['tstamp'] = Time()
+SimpleTemplate.defaults['time'] = Time()
 SimpleTemplate.defaults['OK'] = OK
-SimpleTemplate.defaults['ER'] = ER
+SimpleTemplate.defaults['ERR'] = ERR
 SimpleTemplate.defaults['DEBUG'] = False
 
 
@@ -59,40 +63,41 @@ class MyTimer(Timer):
       raise TimerCanceled
 
 
-def check(cmd):
+def run_cmd(cmd):
   if isinstance(cmd, str):
     cmd = shlex.split(cmd)
   try:
     r = check_output(cmd)
     return OK, r.decode()
   except CalledProcessError as err:
-    return ER, err.output.decode()
-
-
-class Monitor:
-  def check_mdraid(self):
-    st, out = check(CHECK_MDRAID)
-    return st, out if out else "no raid configured?"
-monitor = Monitor()
+    return ERR, err.output.decode()
 
 
 checks = []
 class Checker:
-  interval = 60
   last_checked = None
   last_status = None, "<no check were performed yet>"
 
-  def __init__(self, interval=60):
-    global checks
+  def __init__(self, interval=60, name="<no name>", descr=None):
     self.interval = interval
-    checks += [self]
-    self.statuses = []
+    self.name = name
+    self.descr = descr
+    self.statuses = deque(maxlen=6)
     self.log = Log("checker %s" % self.__class__.__name__)
+    global checks; checks += [self]
+
+  def _check(self):
+    if self.last_checked:
+      delta = time.time() - self.last_checked
+      if delta > (self.interval+1):
+        log.critical("behind schedule for %ss" % delta)
+    self.last_status  =  self.check()
+    self.last_checked = time.time()
+    self.statuses += [self.last_status]
+    return self.last_status
 
   def check(self):
-    self.last_checked = time.time()
-    self.last_status = ER, "<this is a generic check>"
-    return self.last_status
+    return ERR, "<this is a generic check>"
 
   def get_next_check(self):
     if not self.last_checked:
@@ -101,8 +106,19 @@ class Checker:
     now = time.time()
     next_check = self.last_checked + self.interval
     if next_check < now:
-      #TODO: emit warning message
       return now
+    return next_check
+
+
+class CMDChecker(Checker):
+  def __init__(self, cmd, **kwargs):
+    super().__init__(**kwargs)
+    self.cmd = cmd
+  def check(self):
+    st, out = run_cmd(self.cmd)
+    return st, out if out else "no raid configured?"
+  def __repr__(self):
+    return '%s("%s")' % (self.__class__.__name__, self.cmd)
 
 
 class Scheduler(Thread):
@@ -145,7 +161,7 @@ class Scheduler(Thread):
 
 class Worker(Thread):
   def __init__(self, timeline):
-    super().__init__(daemon=False)
+    super().__init__(daemon=True)
     self.timeline = timeline
     self.log = Log("worker %s" % self.name)
 
@@ -155,22 +171,18 @@ class Worker(Thread):
     while True:
       c = queue.get()
       self.log.debug("running %s" % c)
-      r, out = c.check()
+      r, out = c._check()
       schedule(c)
-
 
 
 @route('/')
 @view('all')
 def all():
-  checks = []
   status = OK
-  for attr in dir(monitor):
-    if attr.startswith("check_"):
-      st, out = getattr(monitor, attr)()
-      if st != OK: status = ER
-      checks += [(st, out)]
-  response.status = 200 if status == OK else 504
+  for c in checks:
+    if c.last_status not in [OK, None]:
+      status = ERR
+  response.status = 200 if status == OK else 500
   return dict(checks=checks, status=status)
 
 
@@ -191,6 +203,12 @@ if __name__ == '__main__':
     STATIC_ROOT = 'static/'
     SimpleTemplate.defaults['DEBUG'] = True
     print("running in debug mode", file=sys.stderr)
+
+  CMDChecker(CHECK_MDRAID, interval=10)
+  scheduler = Scheduler()
+  scheduler.start()
+  for c in checks:
+    scheduler.schedule(c)
 
   HOST, PORT = args.listen.split(':')
   run(host=HOST, port=PORT, debug=args.debug, reloader=args.debug, interval=0.2)
