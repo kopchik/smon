@@ -146,7 +146,7 @@ class Scheduler(Thread):
       t, c = self.inq.get()
       with self.lock:
         now = time.time()
-        self.timer = MyTimer(t-now, lambda: 1)
+        self.timer = MyTimer(t-now)
       try:
         self.timer.start()
         self.log.debug("sleeping for %s" % self.timer.interval)
