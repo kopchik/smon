@@ -1,8 +1,11 @@
 %def delta(last_time):
-%  d = time.epoch() - last_time
-%  return "%sm %ss" % (int(d//60), int(d%60))
+%  if last_time:
+%    d = time.epoch() - last_time
+%    return "%sm %ss" % (int(d//60), int(d%60))
+%  end
+%  return "never"
 %end
-
+%print("!!!", check)
 %r, out = check.last_status
 %if r == OK:
   <div class="check ok">
