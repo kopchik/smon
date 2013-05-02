@@ -70,7 +70,7 @@ class Checker:
     if self.last_checked:
       delta = time.time() - self.last_checked
       if delta > (self.interval+1):
-        log.critical("behind schedule for %ss" % delta)
+        self.log.critical("behind schedule for %ss" % delta)
     self.last_status  =  self.check()
     self.last_checked = time.time()
     self.statuses += [self.last_status]

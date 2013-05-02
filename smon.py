@@ -53,8 +53,8 @@ if __name__ == '__main__':
     SimpleTemplate.defaults['DEBUG'] = True
     print("running in debug mode", file=sys.stderr)
 
-  for cfg in args.config:
-    imp.load_source("cfg", pathname=cfg)
+  for i, cfg in enumerate (args.config):
+    imp.load_source("cfg%s"%i, pathname=cfg)
 
   scheduler = Scheduler()
   scheduler.start()
@@ -62,4 +62,5 @@ if __name__ == '__main__':
     scheduler.schedule(c)
 
   HOST, PORT = args.listen.split(':')
+  PORT = int(PORT)
   run(host=HOST, port=PORT, debug=args.debug, reloader=args.debug, interval=0.2)
