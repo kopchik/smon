@@ -7,7 +7,7 @@ import shlex
 import time
 import sys
 
-__version__ = 1.3
+__version__ = 1.4
 set_global_level("debug")
 OK = True
 ERR = False
@@ -56,7 +56,7 @@ def run_cmd(cmd):
 checks = []
 class Checker:
   last_checked = None
-  last_status = None, "<no check were performed yet>"
+  last_status = None, "<no checks were performed yet>"
 
   def __init__(self, interval=60, name="<no name>", descr=None):
     self.interval = interval
@@ -90,6 +90,9 @@ class Checker:
     return next_check
 
   def __lt__(self, other):
+    """ This is for PriorityQueue that requires added elements
+        to support ordering
+    """
     return True
 
 
@@ -100,7 +103,7 @@ class CMDChecker(Checker):
 
   def check(self):
     st, out = run_cmd(self.cmd)
-    return st, out if out else "no raid configured?"
+    return st, (out if out else "<no output?>")
 
   def __repr__(self):
     return '%s("%s")' % (self.__class__.__name__, self.cmd)
@@ -132,6 +135,7 @@ class Scheduler(Thread):
       with self.lock:
         now = time.time()
         self.timer = MyTimer(t-now)
+
       try:
         self.timer.start()
         self.log.debug("sleeping for %s" % self.timer.interval)
