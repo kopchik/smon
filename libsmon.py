@@ -1,13 +1,13 @@
 from subprocess import check_output, CalledProcessError
+from queue import Queue, PriorityQueue, Empty
 from threading import Thread, Lock, Timer
-from queue import Queue, PriorityQueue
 from useful.log import Log, set_global_level
 from collections import deque
 import shlex
 import time
 import sys
 
-__version__ = 1.5
+__version__ = 1.6
 set_global_level("debug")
 OK = True
 ERR = False
@@ -70,7 +70,7 @@ class Checker:
     if self.last_checked:
       delta = time.time() - self.last_checked
       if delta > (self.interval+1):
-        self.log.critical("behind schedule for %ss" % delta)
+        self.log.critical("we are %ss behind the schedule" % delta)
     self.last_status  =  self.check()
     self.last_checked = time.time()
     self.statuses += [self.last_status]
@@ -129,9 +129,20 @@ class Scheduler(Thread):
       self.inq.put((time, checker))
       self.timer.cancel()  # trigger recalculate because this task may go before pending
 
+  def flush(self):
+      """ Request immidiate check.
+          Items that are not in the queue are ignored
+      """
+      while self.inq:
+        try:
+          t,c = self.inq.get(block=False)
+        except Empty as err:
+          break
+        self.outq.put(c)
+
   def run(self):
     while True:
-      t, c = self.inq.get()
+      t,c = self.inq.get()
       with self.lock:
         now = time.time()
         self.timer = MyTimer(t-now)
@@ -143,9 +154,8 @@ class Scheduler(Thread):
       except TimerCanceled:
         self.log.notice("timer aborted, recalculating timeouts")
         with self.lock:
-          print(t,c)
           self.inq.put((t,c))
-        continue
+        continue  # restart loop
       self.outq.put(c)
 
 

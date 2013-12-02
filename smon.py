@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-from bottle import SimpleTemplate, TEMPLATE_PATH, static_file, route, request, response, view, run
+from bottle import SimpleTemplate, TEMPLATE_PATH, static_file, route, request, response, view, run, redirect
 from libsmon import Scheduler, __version__, OK, ERR, checks
 import argparse
 import time
@@ -33,6 +33,11 @@ def all():
   response.status = 200 if status == OK else 500
   return dict(checks=checks, status=status)
 
+
+@route('/flush')
+def flush():
+  scheduler.flush()
+  redirect('/')
 
 @route('/static/<path:path>')
 def callback(path):
