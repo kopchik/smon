@@ -28,7 +28,7 @@ SimpleTemplate.defaults['DEBUG'] = False
 def all():
   status = OK
   for c in checks:
-    if c.last_status not in [OK, None]:
+    if c.last_status[0] not in [OK, None]:
       status = ERR
   response.status = 200 if status == OK else 500
   return dict(checks=checks, status=status)
