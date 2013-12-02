@@ -19,5 +19,5 @@ CMDChecker(name="backups",
            cmd="ssh -o BatchMode=yes backupserver.net '/usr/bin/check_backups.sh'", interval=600)
 ~~~~
 
-Then run smon.py and brouse the results on http://localhost:8181/ .
+Then run smon.py and browse the results on http://localhost:8181/ .
 You may want to protect this page with a password :).
