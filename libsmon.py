@@ -103,7 +103,7 @@ class CMDChecker(Checker):
 
   def check(self):
     st, out = run_cmd(self.cmd)
-    return st, (out if out else "<no output?>")
+    return st, (out if out else "<no output>")
 
   def __repr__(self):
     return '%s("%s")' % (self.__class__.__name__, self.cmd)
