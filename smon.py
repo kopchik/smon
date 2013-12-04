@@ -46,8 +46,8 @@ def callback(path):
 
 if __name__ == '__main__':
   parser = argparse.ArgumentParser(description='Monitor the machine.')
-  parser.add_argument('--debug', default=False, type=bool, const=True, nargs='?', help='enable debug mode')
-  parser.add_argument('--listen', default="%s:%s"%(HOST,PORT), type=str,
+  parser.add_argument('-d', '--debug', default=False, type=bool, const=True, nargs='?', help='enable debug mode')
+  parser.add_argument('-l', '--listen', default="%s:%s"%(HOST,PORT), type=str,
       help='Override listen address. :8080 means to bind on 0.0.0.0:8080')
   parser.add_argument('-c', '--config', default=['/etc/smoncfg.py'], nargs='*')
   args = parser.parse_args()
