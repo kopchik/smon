@@ -58,22 +58,25 @@ class Checker:
   last_checked = None
   last_status = None, "<no checks were performed yet>"
 
-  def __init__(self, interval=60, name="<no name>", descr=None):
+  def __init__(self, interval=60, name="<no name>", descr=None, history=6):
     self.interval = interval
     self.name = name
     self.descr = descr
-    self.statuses = deque(maxlen=6)
+    self.statuses = deque(maxlen=history)
     self.log = Log("checker %s" % self.__class__.__name__)
     global checks; checks += [self]
 
   def _check(self):
     if self.last_checked:
       delta = time.time() - self.last_checked
-      if delta > (self.interval+1):
+      if delta > (self.interval+1):  # tolerate at most 1 second of the delay
         self.log.critical("we are %ss behind the schedule" % delta)
-    self.last_status  =  self.check()
-    self.last_checked = time.time()
+    try:
+      self.last_status  =  self.check()
+    except Exception as err:
+      self.last_status = ERR, err
     self.statuses += [self.last_status]
+    self.last_checked = time.time()
     return self.last_status
 
   def check(self):
