@@ -1,5 +1,5 @@
 from subprocess import check_output, CalledProcessError
-from threading import Thread, Lock, Timer, Event
+from threading import Thread, Lock, Timer
 from queue import Queue, PriorityQueue, Empty
 from useful.log import Log, set_global_level
 from collections import deque
@@ -112,7 +112,6 @@ class Scheduler(Thread):
   """
   def __init__(self, workers=5):
     super().__init__(daemon=True)
-    self.flushed = Event()  # the queue was flushed
     self.qlock = Lock()      # freeze scheduling of pending tasks
     self.queue  = PriorityQueue()
     self.outq = Queue()      # fired checks to be executed
@@ -122,20 +121,20 @@ class Scheduler(Thread):
       worker = Worker(self)
       worker.start()
 
-
   def flush(self):
-      """ Request immidiate check.
-          Items that are not in the queue are ignored
-      """
+      """ Request immidiate check.  """
+      self.queue.put((-1, None))  # -1 to ensure that this event will be served first
       with self.qlock:
         self.timer.cancel()
-        self.flushed.wait()
-      while True:
-        try:
-          _,c = self.queue.get(block=False)
-          self.outq.put(c)
-        except Empty:
-          break
+
+  def _flush(self):
+    """ flush the queue. To be called by run() """
+    while True:
+      try:
+        _,c = self.queue.get(block=False)
+        self.outq.put(c)
+      except Empty:
+        break
 
   def schedule(self, checker):
     time = checker.get_next_check()
@@ -147,6 +146,10 @@ class Scheduler(Thread):
     while True:
       with self.qlock:
         t,c = self.queue.get()
+        if c == None:  # flush() was called
+          self._flush()
+          continue
+
         delta = t - time.time()
         self.timer = MyTimer(delta)
         self.timer.start()
@@ -157,8 +160,6 @@ class Scheduler(Thread):
       except TimerCanceled:
         self.log.debug("timer aborted, recalculating timeouts")
         self.queue.put((t,c))  # put back pending task
-        self.flushed.set()
-        self.flushed.clear()
         continue  # restart loop
 
       self.outq.put(c)
