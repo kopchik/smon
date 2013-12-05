@@ -1,14 +1,14 @@
 from subprocess import check_output, CalledProcessError
+from threading import Thread, Lock, Timer, Event
 from queue import Queue, PriorityQueue, Empty
-from threading import Thread, Lock, Timer
 from useful.log import Log, set_global_level
 from collections import deque
 import shlex
 import time
 import sys
 
-__version__ = 1.6
-set_global_level("debug")
+__version__ = 1.7
+set_global_level("info")
 OK = True
 ERR = False
 
@@ -20,18 +20,13 @@ class TimerCanceled(Exception):
 
 assert not hasattr(Timer, "canceled"),  \
     "Do not want to override attribute, pick another name"
-assert not hasattr(Timer, "interval"),  \
-    "Do not want to override attribute, pick another name"
-
 class MyTimer(Timer):
   """ Advanced timer. It support the following enhancements:
-      1. It keeps interval in .interval
       2. .join() raises TimerCanceled if timer was canceled
   """
   def __init__(self, t, f=lambda: True, **kwargs):
     super().__init__(t, f, **kwargs)
     self.canceled = False
-    self.interval = t
 
   def cancel(self):
     super().cancel()
@@ -68,9 +63,9 @@ class Checker:
 
   def _check(self):
     if self.last_checked:
-      delta = time.time() - self.last_checked
-      if delta > (self.interval+1):  # tolerate at most 1 second of the delay
-        self.log.critical("we are %ss behind the schedule" % delta)
+      delay = time.time() - self.last_checked - self.interval
+      if delay > 0.5:
+        self.log.critical("we are %.2fs behind the schedule (interval=%.2fs)" % (delay, self.interval))
     try:
       self.last_status  =  self.check()
     except Exception as err:
@@ -117,48 +112,55 @@ class Scheduler(Thread):
   """
   def __init__(self, workers=5):
     super().__init__(daemon=True)
-    self.lock = Lock()       # lock queue manipulations
-    self.inq  = PriorityQueue()
+    self.flushed = Event()  # the queue was flushed
+    self.qlock = Lock()      # freeze scheduling of pending tasks
+    self.queue  = PriorityQueue()
     self.outq = Queue()      # fired checks to be executed
-    self.timer = MyTimer(0)  # timer placeholder for .schedule() so it can call self.timer.cancel() during first time
+    self.timer = MyTimer(0)  # timer placeholder for .schedule() so it can call self.timer.cancel() during the first time
     self.log = Log("scheduler")
     for i in range(workers):
       worker = Worker(self)
       worker.start()
 
-  def schedule(self, checker):
-    time = checker.get_next_check()
-    with self.lock:
-      self.inq.put((time, checker))
-      self.timer.cancel()  # trigger recalculate because this task may go before pending
 
   def flush(self):
       """ Request immidiate check.
           Items that are not in the queue are ignored
       """
-      while self.inq:
+      with self.qlock:
+        self.timer.cancel()
+        self.flushed.wait()
+      while True:
         try:
-          t,c = self.inq.get(block=False)
-        except Empty as err:
+          _,c = self.queue.get(block=False)
+          self.outq.put(c)
+        except Empty:
           break
-        self.outq.put(c)
+
+  def schedule(self, checker):
+    time = checker.get_next_check()
+    self.queue.put((time, checker))
+    with self.qlock:
+      self.timer.cancel()  # trigger timeline recalculate
 
   def run(self):
     while True:
-      t,c = self.inq.get()
-      with self.lock:
-        now = time.time()
-        self.timer = MyTimer(t-now)
+      with self.qlock:
+        t,c = self.queue.get()
+        delta = t - time.time()
+        self.timer = MyTimer(delta)
+        self.timer.start()
 
       try:
-        self.timer.start()
-        self.log.debug("sleeping for %s" % self.timer.interval)
+        self.log.debug("sleeping for %.2f" % delta)
         self.timer.join()
       except TimerCanceled:
-        self.log.notice("timer aborted, recalculating timeouts")
-        with self.lock:
-          self.inq.put((t,c))
+        self.log.debug("timer aborted, recalculating timeouts")
+        self.queue.put((t,c))  # put back pending task
+        self.flushed.set()
+        self.flushed.clear()
         continue  # restart loop
+
       self.outq.put(c)
 
 
