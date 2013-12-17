@@ -10,7 +10,7 @@ import sys
 PREFIX = '/usr/share/smon-%s/' % __version__
 TEMPLATE_PATH.insert(0, PREFIX + 'views')
 STATIC_ROOT = PREFIX + 'static'
-HOST = ''
+HOST = '0.0.0.0'
 PORT = 8181
 
 class Time:
@@ -66,6 +66,10 @@ if __name__ == '__main__':
   for c in checks:
     scheduler.schedule(c)
 
-  HOST, PORT = args.listen.split(':')
+  try:
+    HOST, PORT = args.listen.split(':')
+  except ValueError:
+    raise Exception("listen address should be in the form of <HOST>:<PORT> or :<PORT>")
   PORT = int(PORT)
+  if not HOST: HOST = "0.0.0.0"
   run(host=HOST, port=PORT, debug=args.debug, reloader=args.debug, interval=0.2)
