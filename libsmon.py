@@ -124,11 +124,10 @@ class Scheduler(Thread):
   def flush(self):
       """ Request immidiate check.  """
       self.queue.put((-1, None))  # -1 to ensure that this event will be served first
-      with self.qlock:
-        self.timer.cancel()
+      self.recalculate()
 
   def _flush(self):
-    """ flush the queue. To be called by run() """
+    """ flush the queue. To be called by self.run() """
     while True:
       try:
         _,c = self.queue.get(block=False)
@@ -136,11 +135,15 @@ class Scheduler(Thread):
       except Empty:
         break
 
+  def recalculate(self):
+    """ recalculate timeouts (e.g., when new event was added) """
+    with self.qlock:
+      self.timer.cancel()  # trigger timeline recalculate
+
   def schedule(self, checker):
     time = checker.get_next_check()
     self.queue.put((time, checker))
-    with self.qlock:
-      self.timer.cancel()  # trigger timeline recalculate
+    self.recalculate()
 
   def run(self):
     while True:
