@@ -1,13 +1,13 @@
 from subprocess import check_output, CalledProcessError
 from threading import Thread, Lock, Timer
 from queue import Queue, PriorityQueue
-from useful.log import Log, set_global_level
+from useful.log import Log, logfilter
 from collections import deque
 import shlex
 import time
 
 __version__ = 1.4
-set_global_level("debug")
+logfilter.default = True
 OK = True
 ERR = False
 
@@ -146,14 +146,14 @@ class Scheduler(Thread):
 
 
 class Worker(Thread):
-  def __init__(self, timeline):
+  def __init__(self, scheduler):
     super().__init__(daemon=True)
-    self.timeline = timeline
+    self.scheduler = scheduler
     self.log = Log("worker %s" % self.name)
 
   def run(self):
-    queue = self.timeline.ready
-    schedule = self.timeline.schedule
+    queue = self.scheduler.ready
+    schedule = self.scheduler.schedule
     while True:
       c = queue.get()
       self.log.debug("running %s" % c)
