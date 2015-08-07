@@ -1,5 +1,5 @@
 from subprocess import check_output, CalledProcessError
-from threading import Thread, Lock, Timer
+from threading import Thread, Lock, Timer, Condition
 from queue import Queue, PriorityQueue, Empty
 from useful.log import Log, logfilter
 from collections import deque
@@ -23,13 +23,7 @@ def run_cmd(cmd):
 
 
 class TimerCanceled(Exception):
-  """Fired in .join() when MyTimer is aborted by .cancel"""
-
-
-assert not hasattr(Timer, "canceled"),  \
-    "Do not want to override attribute, pick another name"
-assert not hasattr(Timer, "interval"),  \
-    "Do not want to override attribute, pick another name"
+  """ This exception fired in .join() when MyTimer is aborted by .cancel. """
 
 
 class MyTimer(Timer):
@@ -37,7 +31,13 @@ class MyTimer(Timer):
       1. It keeps interval in .interval
       2. .join() raises TimerCanceled if timer was canceled
   """
+  assert not hasattr(Timer, "canceled"),  \
+      "Do not want to override attribute, pick another name"
+  assert not hasattr(Timer, "interval"),  \
+      "Do not want to override attribute, pick another name"
+
   def __init__(self, t, f=lambda: True, **kwargs):
+    if t < 0: t = 0  # just in case, not really needed by current implementation
     super().__init__(t, f, **kwargs)
     self.canceled = False
 
@@ -60,10 +60,10 @@ class Checker:
     global all_checks
     all_checks.append(self)
     self.interval = interval
-    self.name = name
-    self.descr = descr
-    self.statuses = deque(maxlen=histlen)
-    self.log = Log("checker %s" % self.__class__.__name__)
+    self.name     = name
+    self.descr    = descr
+    self.history  = deque(maxlen=histlen)
+    self.log      = Log("checker %s" % self.__class__.__name__)
 
   def _check(self):
     if self.last_checked:
@@ -72,7 +72,7 @@ class Checker:
         self.log.critical("behind schedule for %ss" % delta)
     self.last_status  =  self.check()
     self.last_checked = time.time()
-    self.statuses += [self.last_status]
+    self.history.append(self.last_status)
     self.last_checked = time.time()
     return self.last_status
 
@@ -83,11 +83,7 @@ class Checker:
     if not self.last_checked:
       self.log.debug("was never checked, requesting immediate check")
       return -1
-    now = time.time()
-    next_check = self.last_checked + self.interval
-    if next_check < now:
-      return now
-    return next_check
+    return self.last_checked + self.interval
 
   def __lt__(self, other):
     """ This is for PriorityQueue that requires added elements to support ordering. """
@@ -112,58 +108,58 @@ class Scheduler(Thread):
   def __init__(self, workers=5, histlen=10000):
     super().__init__(daemon=True)
     self.pending = PriorityQueue()
-    self.ready = Queue()      # fired checks to be executed
-    self.lock = Lock()        # lock queue manipulations
-    self.timer = MyTimer(0)   # timer placeholder for .schedule() so it can call self.timer.cancel() during the first call
-    self.log = Log("scheduler")
+    self.ready   = Queue()                # checks to be executed
+    self.cond    = Condition()
+    self.state   = None
+    self.lock    = Lock()                 # lock queue manipulations
+    self.timer   = MyTimer(0)             # timer placeholder for .schedule() so it can call self.timer.cancel() during the first call
+    self.log     = Log("scheduler")
     self.history = deque(maxlen=histlen)  # keep track of the history
     for i in range(workers):
       worker = Worker(self)
       worker.start()
 
   def flush(self):
-      """ Request immidiate check.  """
-      self.queue.put((-1, None))  # -1 to ensure that this event will be served first
+      """ Request immidiate check. """
+      # TODO: the current pending task won't be flushed
+      self.log.debug("flushing queue")
+      with self.cond:
+        self.cond.waitfor(lambda: self.state == 'loop')
+        while True:
+          try:
+            _, check = self.pending.get_nowait()
+            self.ready.put(check)
+          except Empty:
+            pass
       self.recalculate()
-
-  def _flush(self):
-    """ flush the queue. To be called by self.run() """
-    while True:
-      try:
-        _,c = self.queue.get(block=False)
-        self.outq.put(c)
-      except Empty:
-        break
 
   def recalculate(self):
     """ recalculate timeouts (e.g., when new event was added) """
-    with self.qlock:
+    with self.lock:
       self.timer.cancel()  # trigger timeline recalculate
 
-  # TODO: negative time?
   def schedule(self, checker):
     t = checker.get_next_check()
-    with self.lock:
-      self.pending.put((t, checker))
-      self.timer.cancel()  # trigger recalculate because this task may go before pending
+    self.pending.put((t, checker))
+    self.recalculate()
 
   def run(self):
     while True:
       t, c = self.pending.get()
       with self.lock:
-        now = time.time()
-        self.timer = MyTimer(t-now)
-        self.timer.start()
-      try:
+        delta = t - time.time()
         self.log.debug("sleeping for %.2f" % delta)
+        self.timer = MyTimer(delta)
+        self.timer.start()
+
+      try:
         self.timer.join()
         self.ready.put(c)
       except TimerCanceled:
         self.log.debug("new item scheduled, restarting scheduler (this is normal)")
-        with self.lock:
-          print(t,c)
-          self.pending.put((t, c))
+        self.pending.put((t, c))
         continue
+
 
 
 class Worker(Thread):
