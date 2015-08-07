@@ -1,17 +1,19 @@
 #!/usr/bin/env python
 
-from bottle import SimpleTemplate, TEMPLATE_PATH, static_file, route, request, response, view, run
-from libsmon import Scheduler, __version__, OK, ERR, checks
+from bottle import SimpleTemplate, TEMPLATE_PATH, Bottle, static_file, route, request, response, view, run
+from libsmon import Scheduler, __version__, OK, ERR, all_checks
 import argparse
 import time
 import imp
 import sys
 
+app = Bottle()
 PREFIX = '/usr/share/smon-%s/' % __version__
 TEMPLATE_PATH.insert(0, PREFIX + 'views')
 STATIC_ROOT = PREFIX + 'static'
 HOST = ''
 PORT = 8181
+
 
 class Time:
     def epoch(self):
@@ -23,22 +25,32 @@ SimpleTemplate.defaults['OK'] = OK
 SimpleTemplate.defaults['ERR'] = ERR
 SimpleTemplate.defaults['DEBUG'] = False
 
-@route('/')
+
+@app.route('/')
 @view('all')
 def all():
   status = OK
-  for c in checks:
+  for c in all_checks:
     if c.last_status not in [OK, None]:
       status = ERR
   response.status = 200 if status == OK else 500
-  return dict(checks=checks, status=status)
+  return dict(checks=all_checks, status=status)
 
 
-@route('/static/<path:path>')
+@app.route('/static/<path:path>')
 def callback(path):
     return static_file(path, root=STATIC_ROOT)
 
 
+@app.route('/stream')
+def stream():
+  wsock = request.environ.get('wsgi.websocket')
+  return {}
+
+
+from gevent.pywsgi import WSGIServer
+#from geventwebsocket import WebSocketError
+from geventwebsocket.handler import WebSocketHandler
 if __name__ == '__main__':
   parser = argparse.ArgumentParser(description='Monitor the machine.')
   parser.add_argument('--debug', default=False, type=bool, const=True, nargs='?', help='enable debug mode')
@@ -58,9 +70,11 @@ if __name__ == '__main__':
 
   scheduler = Scheduler()
   scheduler.start()
-  for c in checks:
+  for c in all_checks:  # do initial scheduling
     scheduler.schedule(c)
 
   HOST, PORT = args.listen.split(':')
   PORT = int(PORT)
-  run(host=HOST, port=PORT, debug=args.debug, reloader=args.debug, interval=0.2)
+  # run(host=HOST, port=PORT, debug=args.debug, reloader=args.debug, interval=0.2)
+  server = WSGIServer((HOST, PORT), app, handler_class=WebSocketHandler)
+  server.serve_forever()
