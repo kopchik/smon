@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-from bottle import SimpleTemplate, TEMPLATE_PATH, Bottle, static_file, route, request, response, view, run
+from bottle import SimpleTemplate, TEMPLATE_PATH, Bottle, static_file, route, request, response, view, run, redirect
 from libsmon import Scheduler, __version__, OK, ERR, all_checks
 import argparse
 import time
@@ -11,7 +11,7 @@ app = Bottle()
 PREFIX = '/usr/share/smon-%s/' % __version__
 TEMPLATE_PATH.insert(0, PREFIX + 'views')
 STATIC_ROOT = PREFIX + 'static'
-HOST = ''
+HOST = '0.0.0.0'
 PORT = 8181
 
 
@@ -37,6 +37,12 @@ def all():
   return dict(checks=all_checks, status=status)
 
 
+@app.route('/flush')
+def flush():
+  scheduler.flush()
+  redirect('/')
+
+
 @app.route('/static/<path:path>')
 def callback(path):
     return static_file(path, root=STATIC_ROOT)
@@ -53,8 +59,8 @@ from gevent.pywsgi import WSGIServer
 from geventwebsocket.handler import WebSocketHandler
 if __name__ == '__main__':
   parser = argparse.ArgumentParser(description='Monitor the machine.')
-  parser.add_argument('--debug', default=False, type=bool, const=True, nargs='?', help='enable debug mode')
-  parser.add_argument('--listen', default="%s:%s"%(HOST,PORT), type=str,
+  parser.add_argument('-d', '--debug', default=False, type=bool, const=True, nargs='?', help='enable debug mode')
+  parser.add_argument('-l', '--listen', default="%s:%s"%(HOST,PORT), type=str,
       help='Override listen address. :8080 means to bind on 0.0.0.0:8080')
   parser.add_argument('-c', '--config', default=['/etc/smoncfg.py'], nargs='*')
   args = parser.parse_args()
@@ -73,8 +79,12 @@ if __name__ == '__main__':
   for c in all_checks:  # do initial scheduling
     scheduler.schedule(c)
 
-  HOST, PORT = args.listen.split(':')
+  try:
+    HOST, PORT = args.listen.split(':')
+  except ValueError:
+    raise Exception("listen address should be in the form of <HOST>:<PORT> or :<PORT>")
   PORT = int(PORT)
+  if not HOST: HOST = "0.0.0.0"
   # run(host=HOST, port=PORT, debug=args.debug, reloader=args.debug, interval=0.2)
   server = WSGIServer((HOST, PORT), app, handler_class=WebSocketHandler)
   server.serve_forever()

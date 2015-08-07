@@ -1,12 +1,12 @@
 from subprocess import check_output, CalledProcessError
 from threading import Thread, Lock, Timer
-from queue import Queue, PriorityQueue
+from queue import Queue, PriorityQueue, Empty
 from useful.log import Log, logfilter
 from collections import deque
 import shlex
 import time
 
-__version__ = 1.4
+__version__ = 1.9
 logfilter.default = True
 OK = True
 ERR = False
@@ -40,7 +40,6 @@ class MyTimer(Timer):
   def __init__(self, t, f=lambda: True, **kwargs):
     super().__init__(t, f, **kwargs)
     self.canceled = False
-    self.interval = t
 
   def cancel(self):
     super().cancel()
@@ -55,15 +54,15 @@ class MyTimer(Timer):
 all_checks = []
 class Checker:
   last_checked = None
-  last_status = None, "<no check were performed yet>"
+  last_status = None, "<no checks were performed yet>"
 
-  def __init__(self, interval=60, name="<no name>", descr=None):
+  def __init__(self, interval=60, name="<no name>", descr=None, histlen=10):
     global all_checks
     all_checks.append(self)
     self.interval = interval
     self.name = name
     self.descr = descr
-    self.statuses = deque(maxlen=10)
+    self.statuses = deque(maxlen=histlen)
     self.log = Log("checker %s" % self.__class__.__name__)
 
   def _check(self):
@@ -74,6 +73,7 @@ class Checker:
     self.last_status  =  self.check()
     self.last_checked = time.time()
     self.statuses += [self.last_status]
+    self.last_checked = time.time()
     return self.last_status
 
   def check(self):
@@ -90,7 +90,7 @@ class Checker:
     return next_check
 
   def __lt__(self, other):
-    """ Dummy function to make instances orderable and comparable. Used by PriorityQueue. """
+    """ This is for PriorityQueue that requires added elements to support ordering. """
     return True
 
 
@@ -100,8 +100,8 @@ class CMDChecker(Checker):
     self.cmd = cmd
 
   def check(self):
-    st, out = run_cmd(self.cmd)
-    return st, out if out else "(no output)"
+    status, output = run_cmd(self.cmd)
+    return status, (output if output else "<no output>")
 
   def __repr__(self):
     return '%s("%s")' % (self.__class__.__name__, self.cmd)
@@ -121,6 +121,26 @@ class Scheduler(Thread):
       worker = Worker(self)
       worker.start()
 
+  def flush(self):
+      """ Request immidiate check.  """
+      self.queue.put((-1, None))  # -1 to ensure that this event will be served first
+      self.recalculate()
+
+  def _flush(self):
+    """ flush the queue. To be called by self.run() """
+    while True:
+      try:
+        _,c = self.queue.get(block=False)
+        self.outq.put(c)
+      except Empty:
+        break
+
+  def recalculate(self):
+    """ recalculate timeouts (e.g., when new event was added) """
+    with self.qlock:
+      self.timer.cancel()  # trigger timeline recalculate
+
+  # TODO: negative time?
   def schedule(self, checker):
     t = checker.get_next_check()
     with self.lock:
@@ -133,17 +153,17 @@ class Scheduler(Thread):
       with self.lock:
         now = time.time()
         self.timer = MyTimer(t-now)
-      try:
         self.timer.start()
-        self.log.debug("sleeping for %s" % self.timer.interval)
+      try:
+        self.log.debug("sleeping for %.2f" % delta)
         self.timer.join()
+        self.ready.put(c)
       except TimerCanceled:
         self.log.debug("new item scheduled, restarting scheduler (this is normal)")
         with self.lock:
           print(t,c)
           self.pending.put((t, c))
         continue
-      self.ready.put(c)
 
 
 class Worker(Thread):

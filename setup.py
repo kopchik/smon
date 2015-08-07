@@ -11,7 +11,7 @@ setup(name='smon',
       license="GPLv3",
       description="reliable server monitoring daemon",
       scripts=['smon.py'],
-      py_modules=["bottle"],
+      py_modules=["bottle", "libsmon"],
       data_files=[
         ('/usr/lib/systemd/system', ['smon.service']),
         (PREFIX+'/views', glob('views/*')),
