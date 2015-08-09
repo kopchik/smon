@@ -82,9 +82,17 @@ class Checker:
 
   def get_next_check(self):
     if not self.last_checked:
-      self.log.debug("was never checked, requesting immediate check")
-      return -1
-    return self.last_checked + self.interval
+      # was never checked, requesting immediate check"
+      next_check = -1
+    elif self.last_status[0] == OK:
+      next_check = self.last_checked + self.interval
+    else:
+      # reduce interval if last status was bad
+      next_check = self.interval / 3
+      next_check = max(next_check, 10)   # not less than 10 seconds
+      next_check = min(next_check, 120)  # no more than two minutes
+      next_check += self.last_checked
+    return next_check
 
   def __lt__(self, other):
     """ This is for PriorityQueue that requires added elements to support ordering. """
