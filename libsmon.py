@@ -1,5 +1,5 @@
 from subprocess import check_output, CalledProcessError
-from threading import Thread, Lock, Timer, Condition
+from threading import Thread, Lock, Timer, Event
 from queue import Queue, PriorityQueue, Empty
 from useful.log import Log, logfilter
 from collections import deque
@@ -109,43 +109,53 @@ class Scheduler(Thread):
     super().__init__(daemon=True)
     self.pending = PriorityQueue()
     self.ready   = Queue()                # checks to be executed
-    self.cond    = Condition()
-    self.state   = None
-    self.lock    = Lock()                 # lock queue manipulations
     self.timer   = MyTimer(0)             # timer placeholder for .schedule() so it can call self.timer.cancel() during the first call
-    self.log     = Log("scheduler")
+    self.lock    = Lock()                 # lock pending queue
+    self.lockev  = Event()                # set by .run() when lock is acquired
     self.history = deque(maxlen=histlen)  # keep track of the history
+    self.log     = Log("scheduler")
+
     for i in range(workers):
       worker = Worker(self)
       worker.start()
 
   def flush(self):
-      """ Request immidiate check. """
-      # TODO: the current pending task won't be flushed
-      self.log.debug("flushing queue")
-      with self.cond:
-        self.cond.waitfor(lambda: self.state == 'loop')
-        while True:
-          try:
-            _, check = self.pending.get_nowait()
-            self.ready.put(check)
-          except Empty:
-            pass
-      self.recalculate()
-
-  def recalculate(self):
-    """ recalculate timeouts (e.g., when new event was added) """
+    """ Request immidiate check. """
+    self.log.debug("flushing pending queue")
     with self.lock:
-      self.timer.cancel()  # trigger timeline recalculate
+      self.lockev.clear()
+      self.pending.put((-1000, None))
+      self.timer.cancel()
+      self.lockev.wait()
+
+      queued = []
+      while True:
+        try:
+          _, check = self.pending.get(block=False)
+          queued.append(check)
+        except Empty:
+          break
+
+      for checker in queued:
+        self.ready.put(checker)
+      self.log.debug("flushing done")
 
   def schedule(self, checker):
     t = checker.get_next_check()
-    self.pending.put((t, checker))
-    self.recalculate()
+    with self.lock:
+      self.pending.put((t, checker))
+      self.timer.cancel()
 
   def run(self):
+    pending = self.pending
+    ready   = self.ready
     while True:
-      t, c = self.pending.get()
+      t, c = pending.get()
+      if c is None:
+        self.lockev.set()
+        with self.lock:
+          continue
+
       with self.lock:
         delta = t - time.time()
         self.log.debug("sleeping for %.2f" % delta)
@@ -154,12 +164,10 @@ class Scheduler(Thread):
 
       try:
         self.timer.join()
-        self.ready.put(c)
+        ready.put(c)
       except TimerCanceled:
         self.log.debug("new item scheduled, restarting scheduler (this is normal)")
-        self.pending.put((t, c))
-        continue
-
+        pending.put((t, c))
 
 
 class Worker(Thread):
@@ -174,8 +182,9 @@ class Worker(Thread):
     schedule = self.scheduler.schedule
     history  = self.scheduler.history
     while True:
-      c = queue.get()
-      self.log.debug("running %s" % c)
-      r, out = c._check()
-      schedule(c)
+      checker = queue.get()
+      self.log.debug("running %s" % checker)
+      r, out = checker._check()
+      self.log.debug("result: %s %s" %(r, out))
+      schedule(checker)
       history.appendleft((time.time(), r, out))
