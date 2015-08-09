@@ -37,7 +37,8 @@ class MyTimer(Timer):
       "Do not want to override attribute, pick another name"
 
   def __init__(self, t, f=lambda: True, **kwargs):
-    if t < 0: t = 0  # just in case, not really needed by current implementation
+    if t < 0:
+      t = 0  # just in case, not really needed by standard implementation
     super().__init__(t, f, **kwargs)
     self.canceled = False
 
@@ -77,7 +78,7 @@ class Checker:
     return self.last_status
 
   def check(self):
-    return ERR, "<this is a generic check>"
+    return ERR, "<you need to override this method>"
 
   def get_next_check(self):
     if not self.last_checked:
