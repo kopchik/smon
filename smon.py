@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import asyncio
+import aiohttp
 from aiohttp import web
 
 import argparse
@@ -28,6 +29,7 @@ class get:
     app.router.add_route(self.meth, self.uri, f)
     return f
 
+
 @get("/")
 def index(req):
   status = OK
@@ -36,8 +38,7 @@ def index(req):
       status = ERR
   http_status = 200 if status == OK else 500
   http_status = 200
-  return web.Response(text=str(http_status), status=http_status)
-#app.router.add_route('GET', '/', index)
+  return web.Response(text=open("static/index.html"), status=http_status)
 
 
 @get('/flush')
@@ -47,6 +48,26 @@ def flush(req):
   return web.HTTPSeeOther('/')
 
 
+@get('/stream')
+def websocket_handler(req):
+  ws = web.WebSocketResponse()
+  ws.start(req)
+
+  while True:
+    msg = yield from ws.receive()
+
+    if msg.tp == aiohttp.MsgType.text:
+      if msg.data == 'close':
+          yield from ws.close()
+      else:
+          ws.send_str(msg.data + '/answer')
+    elif msg.tp == aiohttp.MsgType.close:
+      print('websocket connection closed')
+    elif msg.tp == aiohttp.MsgType.error:
+      print('ws connection closed with exception %s',
+            ws.exception())
+
+  return ws
 
 app.router.add_static('/static', STATIC_ROOT)
 
@@ -66,9 +87,10 @@ if __name__ == '__main__':
   for i, cfg in enumerate(args.config):
     imp.load_source("cfg%s"%i, pathname=cfg)
 
+  # INITIAL SCHEDULING
   scheduler = Scheduler()
   scheduler.start()
-  for c in all_checks:  # do initial scheduling
+  for c in all_checks:
     scheduler.schedule(c)
 
   try:
@@ -81,7 +103,6 @@ if __name__ == '__main__':
     HOST = "0.0.0.0"
 
   # AIO HTTP
-
   loop = asyncio.get_event_loop()
   handler = app.make_handler()
   f = loop.create_server(handler, HOST, PORT)
