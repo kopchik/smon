@@ -1,62 +1,56 @@
 #!/usr/bin/env python
 
-from bottle import SimpleTemplate, TEMPLATE_PATH, Bottle, static_file, route, request, response, view, run, redirect
-from libsmon import Scheduler, __version__, OK, ERR, all_checks
+import asyncio
+from aiohttp import web
+
 import argparse
-import time
 import imp
 import sys
 
-app = Bottle()
-PREFIX = '/usr/share/smon-%s/' % __version__
-TEMPLATE_PATH.insert(0, PREFIX + 'views')
+from libsmon import Scheduler, OK, ERR, all_checks, __version__
+
+
+#PREFIX = '/usr/share/smon-%s/' % __version__
+PREFIX = './'
 STATIC_ROOT = PREFIX + 'static'
 HOST = '0.0.0.0'
 PORT = 8181
 
-
-class Time:
-    def epoch(self):
-      return time.time()
-    def __str__(self):
-        return time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime())
-SimpleTemplate.defaults['time'] = Time()
-SimpleTemplate.defaults['OK'] = OK
-SimpleTemplate.defaults['ERR'] = ERR
-SimpleTemplate.defaults['DEBUG'] = False
+app = web.Application()
 
 
-@app.route('/')
-@view('all')
-def all():
+class get:
+  meth = 'GET'
+  def __init__(self, uri):
+    self.uri = uri
+  def __call__(self, f):
+    f = asyncio.coroutine(f)
+    app.router.add_route(self.meth, self.uri, f)
+    return f
+
+@get("/")
+def index(req):
   status = OK
   for c in all_checks:
     if c.last_status not in [OK, None]:
       status = ERR
-  response.status = 200 if status == OK else 500
-  return dict(checks=all_checks, status=status)
+  http_status = 200 if status == OK else 500
+  http_status = 200
+  return web.Response(text=str(http_status), status=http_status)
+#app.router.add_route('GET', '/', index)
 
 
-@app.route('/flush')
-def flush():
+@get('/flush')
+def flush(req):
   scheduler.flush()
-  redirect('/')
+  yield from asyncio.sleep(1)  # give it a chance to finish some checks
+  return web.HTTPSeeOther('/')
 
 
-@app.route('/static/<path:path>')
-def callback(path):
-    return static_file(path, root=STATIC_ROOT)
+
+app.router.add_static('/static', STATIC_ROOT)
 
 
-@app.route('/stream')
-def stream():
-  wsock = request.environ.get('wsgi.websocket')
-  return {}
-
-
-from gevent.pywsgi import WSGIServer
-#from geventwebsocket import WebSocketError
-from geventwebsocket.handler import WebSocketHandler
 if __name__ == '__main__':
   parser = argparse.ArgumentParser(description='Monitor the machine.')
   parser.add_argument('-d', '--debug', default=False, type=bool, const=True, nargs='?', help='enable debug mode')
@@ -66,12 +60,10 @@ if __name__ == '__main__':
   args = parser.parse_args()
 
   if args.debug:
-    TEMPLATE_PATH.insert(0, 'views/')
     STATIC_ROOT = 'static/'
-    SimpleTemplate.defaults['DEBUG'] = True
     print("running in debug mode", file=sys.stderr)
 
-  for i, cfg in enumerate (args.config):
+  for i, cfg in enumerate(args.config):
     imp.load_source("cfg%s"%i, pathname=cfg)
 
   scheduler = Scheduler()
@@ -83,8 +75,25 @@ if __name__ == '__main__':
     HOST, PORT = args.listen.split(':')
   except ValueError:
     raise Exception("listen address should be in the form of <HOST>:<PORT> or :<PORT>")
+
   PORT = int(PORT)
-  if not HOST: HOST = "0.0.0.0"
-  # run(host=HOST, port=PORT, debug=args.debug, reloader=args.debug, interval=0.2)
-  server = WSGIServer((HOST, PORT), app, handler_class=WebSocketHandler)
-  server.serve_forever()
+  if not HOST:
+    HOST = "0.0.0.0"
+
+  # AIO HTTP
+
+  loop = asyncio.get_event_loop()
+  handler = app.make_handler()
+  f = loop.create_server(handler, HOST, PORT)
+  srv = loop.run_until_complete(f)
+  print('serving on', srv.sockets[0].getsockname())
+  try:
+      loop.run_forever()
+  except KeyboardInterrupt:
+      pass
+  finally:
+      loop.run_until_complete(handler.finish_connections(1.0))
+      srv.close()
+      loop.run_until_complete(srv.wait_closed())
+      loop.run_until_complete(app.finish())
+  loop.close()
