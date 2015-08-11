@@ -5,6 +5,7 @@ import aiohttp
 from aiohttp import web
 
 import argparse
+import json
 import imp
 import sys
 
@@ -57,10 +58,16 @@ def websocket_handler(req):
     msg = yield from ws.receive()
 
     if msg.tp == aiohttp.MsgType.text:
-      if msg.data == 'close':
+      text = msg.data
+      if text == 'CLOSE':
           yield from ws.close()
+      elif text == 'LIST':
+        res = []
+        for c in all_checks:
+          res.append( (c.name, c.last_checked, c.last_status) )
+        ws.send_str(json.dumps(res))
       else:
-          ws.send_str(msg.data + '/answer')
+          raise Exception("Unknown message %s" % msg.data)
     elif msg.tp == aiohttp.MsgType.close:
       print('websocket connection closed')
     elif msg.tp == aiohttp.MsgType.error:
@@ -68,6 +75,7 @@ def websocket_handler(req):
             ws.exception())
 
   return ws
+
 
 app.router.add_static('/static', STATIC_ROOT)
 
@@ -113,7 +121,7 @@ if __name__ == '__main__':
   except KeyboardInterrupt:
       pass
   finally:
-      loop.run_until_complete(handler.finish_connections(1.0))
+      loop.run_until_complete(handler.finish_connections(0.1))
       srv.close()
       loop.run_until_complete(srv.wait_closed())
       loop.run_until_complete(app.finish())
