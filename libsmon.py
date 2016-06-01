@@ -1,16 +1,16 @@
-from subprocess import check_output, CalledProcessError
+from subprocess import check_output, CalledProcessError, STDOUT
 from threading import Thread, Lock, Timer
 from queue import Queue, PriorityQueue, Empty
-from useful.log import Log, set_global_level
+from useful.log import Log, logfilter
 from collections import deque
 import shlex
 import time
 import sys
 
 __version__ = 1.7
-set_global_level("info")
 OK = True
 ERR = False
+logfilter.rules.append(("*.debug", False))
 
 
 
@@ -42,7 +42,7 @@ def run_cmd(cmd):
   if isinstance(cmd, str):
     cmd = shlex.split(cmd)
   try:
-    r = check_output(cmd)
+    r = check_output(cmd, stderr=STDOUT)
     return OK, r.decode()
   except CalledProcessError as err:
     return ERR, err.output.decode()
