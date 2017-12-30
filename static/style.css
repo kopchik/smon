@@ -4,24 +4,24 @@
   /*color:green;  */
 }
 
-div.ok {
+.ok {
   color:black;
 }
 
-div.err {
+.err {
   font-weight:bold;
   color:red;
 }
 
-div.unknown {
+.unknown {
   background-color: gray;
 }
 
-div.check {
+.check {
   border:1px solid;
 }
 
-div.c_name {
+.c_name {
   text-align: center;
   min-width: 5em;
   float: left;
@@ -36,7 +36,7 @@ div.c_name {
   font-size: 50%;
 }
 
-div.check:after {
+.check:after {
   content: "";
   display: table;
   clear: both;

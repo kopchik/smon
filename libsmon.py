@@ -1,30 +1,45 @@
-from subprocess import check_output, CalledProcessError, STDOUT
-from threading import Thread, Lock, Timer
+from subprocess import check_output, CalledProcessError
+from threading import Thread, Lock, Timer, Event
 from queue import Queue, PriorityQueue, Empty
 from useful.log import Log, logfilter
 from collections import deque
 import shlex
 import time
-import sys
 
-__version__ = 1.7
+__version__ = 1.9
+logfilter.default = True
 OK = True
 ERR = False
 logfilter.rules.append(("*.debug", False))
 
 
+def run_cmd(cmd):
+  if isinstance(cmd, str):
+    cmd = shlex.split(cmd)
+  try:
+    r = check_output(cmd)
+    return OK, r.decode()
+  except CalledProcessError as err:
+    return ERR, err.output.decode()
+
 
 class TimerCanceled(Exception):
-  """Fired in .join() when MyTimer is aborted by .cancel"""
+  """ This exception fired in .join() when MyTimer is aborted by .cancel. """
 
 
-assert not hasattr(Timer, "canceled"),  \
-    "Do not want to override attribute, pick another name"
 class MyTimer(Timer):
-  """ Advanced timer. It support the following enhancements:
+  """ A timer with the following enhancements:
+      1. It keeps interval in .interval
       2. .join() raises TimerCanceled if timer was canceled
   """
+  assert not hasattr(Timer, "canceled"),  \
+      "Do not want to override attribute, pick another name"
+  assert not hasattr(Timer, "interval"),  \
+      "Do not want to override attribute, pick another name"
+
   def __init__(self, t, f=lambda: True, **kwargs):
+    if t < 0:
+      t = 0  # just in case, not really needed by standard implementation
     super().__init__(t, f, **kwargs)
     self.canceled = False
 
@@ -38,59 +53,51 @@ class MyTimer(Timer):
       raise TimerCanceled
 
 
-def run_cmd(cmd):
-  if isinstance(cmd, str):
-    cmd = shlex.split(cmd)
-  try:
-    r = check_output(cmd, stderr=STDOUT)
-    return OK, r.decode()
-  except CalledProcessError as err:
-    return ERR, err.output.decode()
+all_checks = []
 
-
-checks = []
 class Checker:
   last_checked = None
   last_status = None, "<no checks were performed yet>"
 
-  def __init__(self, interval=60, name="<no name>", descr=None, history=6):
+  def __init__(self, interval=60, name="<no name>", descr=None, histlen=10):
+    global all_checks
+    all_checks.append(self)
     self.interval = interval
-    self.name = name
-    self.descr = descr
-    self.statuses = deque(maxlen=history)
-    self.log = Log("checker %s" % self.__class__.__name__)
-    global checks; checks += [self]
+    self.name     = name
+    self.descr    = descr
+    self.history  = deque(maxlen=histlen)
+    self.log      = Log("checker %s" % self.__class__.__name__)
 
   def _check(self):
     if self.last_checked:
-      delay = time.time() - self.last_checked - self.interval
-      if delay > 0.5:
-        self.log.critical("we are %.2fs behind the schedule (interval=%.2fs)" % (delay, self.interval))
-    try:
-      self.last_status  =  self.check()
-    except Exception as err:
-      self.last_status = ERR, err
-    self.statuses += [self.last_status]
+      delta = time.time() - self.last_checked
+      if delta > (self.interval + 1):  # tolerate one second delay
+        self.log.critical("behind schedule for %ss" % delta)
+    self.last_status  =  self.check()
+    self.last_checked = time.time()
+    self.history.append(self.last_status)
     self.last_checked = time.time()
     return self.last_status
 
   def check(self):
-    return ERR, "<this is a generic check>"
+    return ERR, "<you need to override this method>"
 
   def get_next_check(self):
     if not self.last_checked:
-      self.log.debug("was never checked, requesting immediate check")
-      return -1
-    now = time.time()
-    next_check = self.last_checked + self.interval
-    if next_check < now:
-      return now
+      # was never checked, requesting immediate check"
+      next_check = -1
+    elif self.last_status[0] == OK:
+      next_check = self.last_checked + self.interval
+    else:
+      # reduce interval if last status was bad
+      next_check = self.interval / 3
+      next_check = max(next_check, 10)   # not less than 10 seconds
+      next_check = min(next_check, 120)  # no more than two minutes
+      next_check += self.last_checked
     return next_check
 
   def __lt__(self, other):
-    """ This is for PriorityQueue that requires added elements
-        to support ordering
-    """
+    """ This is for PriorityQueue that requires added elements to support ordering. """
     return True
 
 
@@ -100,82 +107,95 @@ class CMDChecker(Checker):
     self.cmd = cmd
 
   def check(self):
-    st, out = run_cmd(self.cmd)
-    return st, (out if out else "<no output>")
+    status, output = run_cmd(self.cmd)
+    return status, (output if output else "<no output>")
 
   def __repr__(self):
     return '%s("%s")' % (self.__class__.__name__, self.cmd)
 
 
 class Scheduler(Thread):
-  """ Schedules and executes tasks using threaded workers
-  """
-  def __init__(self, workers=5):
+  """ Schedules and executes tasks using threaded workers. """
+  def __init__(self, workers=5, histlen=10000):
     super().__init__(daemon=True)
-    self.qlock = Lock()      # freeze scheduling of pending tasks
-    self.queue  = PriorityQueue()
-    self.outq = Queue()      # fired checks to be executed
-    self.timer = MyTimer(0)  # timer placeholder for .schedule() so it can call self.timer.cancel() during the first time
-    self.log = Log("scheduler")
+    self.pending = PriorityQueue()
+    self.ready   = Queue()                # checks to be executed
+    self.timer   = MyTimer(0)             # timer placeholder for .schedule() so it can call self.timer.cancel() during the first call
+    self.lock    = Lock()                 # lock pending queue
+    self.lockev  = Event()                # set by .run() when lock is acquired
+    self.history = deque(maxlen=histlen)  # keep track of the history
+    self.log     = Log("scheduler")
+
     for i in range(workers):
       worker = Worker(self)
       worker.start()
 
   def flush(self):
-      """ Request immidiate check.  """
-      self.queue.put((-1, None))  # -1 to ensure that this event will be served first
-      with self.qlock:
-        self.timer.cancel()
+    """ Request immidiate check. """
+    self.log.debug("flushing pending queue")
+    with self.lock:
+      self.lockev.clear()
+      self.pending.put((-1000, None))
+      self.timer.cancel()
+      self.lockev.wait()
 
-  def _flush(self):
-    """ flush the queue. To be called by run() """
-    while True:
-      try:
-        _,c = self.queue.get(block=False)
-        self.outq.put(c)
-      except Empty:
-        break
+      queued = []
+      while True:
+        try:
+          _, check = self.pending.get(block=False)
+          queued.append(check)
+        except Empty:
+          break
+
+      for checker in queued:
+        self.ready.put(checker)
+      self.log.debug("flushing done")
 
   def schedule(self, checker):
-    time = checker.get_next_check()
-    self.queue.put((time, checker))
-    with self.qlock:
-      self.timer.cancel()  # trigger timeline recalculate
+    t = checker.get_next_check()
+    with self.lock:
+      self.pending.put((t, checker))
+      self.timer.cancel()
 
   def run(self):
+    pending = self.pending
+    ready   = self.ready
     while True:
-      with self.qlock:
-        t,c = self.queue.get()
-        if c == None:  # flush() was called
-          self._flush()
+      t, c = pending.get()
+      if c is None:
+        self.lockev.set()
+        with self.lock:
           continue
 
+      with self.lock:
         delta = t - time.time()
+        self.log.debug("sleeping for %.2f" % delta)
         self.timer = MyTimer(delta)
         self.timer.start()
 
       try:
-        self.log.debug("sleeping for %.2f" % delta)
         self.timer.join()
+        ready.put(c)
       except TimerCanceled:
-        self.log.debug("timer aborted, recalculating timeouts")
-        self.queue.put((t,c))  # put back pending task
-        continue  # restart loop
-
-      self.outq.put(c)
+        self.log.debug("new item scheduled, restarting scheduler (this is normal)")
+        pending.put((t, c))
 
 
 class Worker(Thread):
-  def __init__(self, timeline):
+  """ Get tasks that are ready to run and execute them. """
+  def __init__(self, scheduler):
     super().__init__(daemon=True)
-    self.timeline = timeline
+    self.scheduler = scheduler
     self.log = Log("worker %s" % self.name)
 
   def run(self):
-    queue = self.timeline.outq
-    schedule = self.timeline.schedule
+    queue = self.scheduler.ready
+    schedule = self.scheduler.schedule
+    history  = self.scheduler.history
     while True:
-      c = queue.get()
-      self.log.debug("running %s" % c)
-      r, out = c._check()
-      schedule(c)
+      checker = queue.get()
+      self.log.debug("running %s" % checker)
+      r, out = checker._check()
+      self.log.debug("result: %s %s" %(r, out))
+      schedule(checker)
+      history.appendleft((time.time(), r, out))
