@@ -39,7 +39,7 @@ def index(req):
       status = ERR
   http_status = 200 if status == OK else 500
   http_status = 200
-  return web.Response(text=open("static/index.html"), status=http_status)
+  return web.Response(text=open("static/index.html").read(), content_type='text/html', status=http_status)
 
 
 @get('/flush')
@@ -50,17 +50,15 @@ def flush(req):
 
 
 @get('/stream')
-def websocket_handler(req):
+async def websocket_handler(req):
   ws = web.WebSocketResponse()
-  ws.start(req)
+  await ws.prepare(req)
 
-  while True:
-    msg = yield from ws.receive()
-
-    if msg.tp == aiohttp.MsgType.text:
+  async for msg in ws:
+    if msg.tp == aiohttp.WSMsgType.TEXT:
       text = msg.data
       if text == 'CLOSE':
-          yield from ws.close()
+          await ws.close()
       elif text == 'LIST':
         res = []
         for c in all_checks:
@@ -68,9 +66,9 @@ def websocket_handler(req):
         ws.send_str(json.dumps(res))
       else:
           raise Exception("Unknown message %s" % msg.data)
-    elif msg.tp == aiohttp.MsgType.close:
+    elif msg.tp == aiohttp.MsgType.CLOSE:
       print('websocket connection closed')
-    elif msg.tp == aiohttp.MsgType.error:
+    elif msg.tp == aiohttp.WSMsgType.ERROR:
       print('ws connection closed with exception %s',
             ws.exception())
 

@@ -1,5 +1,5 @@
 "use strict";
-var ws = new WebSocket("ws://localhost:8181/stream");
+var ws = new WebSocket("ws://master.messir.net:8181/stream");
 
 
 function display_list(list) {
